@@ -28,9 +28,11 @@ type TrackedEditor = Pick<
 
 // Hosts older than the editor-factory getter (see can1357/oh-my-pi#8655) only
 // expose setEditorComponent; treat the active factory as unknown there.
-function activeEditorFactory(ctx: ExtensionContext): EditorComponentFactory | undefined {
+function editorGetter(
+  ctx: ExtensionContext,
+): (() => EditorComponentFactory | undefined) | undefined {
   const get = (ctx.ui as Partial<ExtensionContext["ui"]>).getEditorComponent;
-  return typeof get === "function" ? get.call(ctx.ui) : undefined;
+  return typeof get === "function" ? () => get.call(ctx.ui) : undefined;
 }
 type CreateEditor = (
   tui: ConstructorParameters<typeof VimEditor>[0],
@@ -147,13 +149,15 @@ type EditorState = {
   enabled: boolean;
   agentBusy: boolean;
   previousEditorFactory?: EditorComponentFactory;
+  installedUi?: ExtensionContext["ui"];
   hasInstalledFactory: boolean;
   installGeneration: number;
 };
 
 function finishInstall(state: EditorState, ctx: ExtensionContext, force = false): void {
   state.currentShutdown = () => ctx.shutdown();
-  const current = activeEditorFactory(ctx);
+  const get = editorGetter(ctx);
+  const current = get?.();
   if (current === state.editorFactory) {
     state.hasInstalledFactory = true;
     return;
@@ -161,13 +165,17 @@ function finishInstall(state: EditorState, ctx: ExtensionContext, force = false)
   if (
     !force &&
     state.hasInstalledFactory &&
-    current !== undefined &&
-    current !== state.previousEditorFactory
+    (get === undefined
+      ? // Getter-less hosts remount the editor on every set and cannot report
+        // the active factory, so re-set only when the target ui changed.
+        state.installedUi === ctx.ui
+      : current !== undefined && current !== state.previousEditorFactory)
   ) {
     return;
   }
   state.previousEditorFactory = current;
   ctx.ui.setEditorComponent(state.editorFactory);
+  state.installedUi = ctx.ui;
   state.hasInstalledFactory = true;
 }
 
@@ -261,10 +269,11 @@ function disableEditor(state: EditorState, ctx: ExtensionContext): void {
   state.enabled = false;
   state.agentBusy = false;
   resetKnownEditors(state);
-  const current = activeEditorFactory(ctx);
+  const current = editorGetter(ctx)?.();
   if (current === state.editorFactory || (current === undefined && state.hasInstalledFactory)) {
     ctx.ui.setEditorComponent(state.previousEditorFactory);
     state.hasInstalledFactory = false;
+    state.installedUi = undefined;
   }
   ctx.ui.setStatus("pi-vimmode", "vim off");
 }
@@ -330,6 +339,7 @@ export function registerVimLifecycle(
     state.installGeneration += 1;
     state.currentShutdown = undefined;
     state.previousEditorFactory = undefined;
+    state.installedUi = undefined;
     state.hasInstalledFactory = false;
     resetKnownEditors(state, {
       restoreHardwareCursorVisibility: event.reason !== "quit",

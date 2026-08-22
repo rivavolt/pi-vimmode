@@ -934,3 +934,23 @@ test("hosts without the editor getter still install and toggle off", async () =>
   expect(ctx.ui.component).toBe(ctx.ui.setCalls.at(-1));
   expect(ctx.ui.statuses.at(-1)).toEqual(["pi-vimmode", "vim"]);
 });
+
+test("getter-less hosts avoid editor churn across repeat installs", async () => {
+  const { hooks, commands, scheduled } = createLifecycleHarness();
+  const ctx = createContext("/repo");
+  delete (ctx.ui as { getEditorComponent?: unknown }).getEditorComponent;
+
+  hooks.get("session_start")?.({}, ctx);
+  scheduled[0]?.();
+  hooks.get("agent_end")?.({}, ctx);
+
+  expect(ctx.ui.setCalls).toHaveLength(1);
+  expect(ctx.ui.notifications).toEqual([]);
+
+  await commands.get("vimmode")?.handler("off", ctx);
+  await commands.get("vimmode")?.handler("on", ctx);
+
+  expect(ctx.ui.setCalls).toHaveLength(3);
+  expect(ctx.ui.setCalls[1]).toBeUndefined();
+  expect(ctx.ui.setCalls[2]).toBe(ctx.ui.setCalls[0]);
+});
