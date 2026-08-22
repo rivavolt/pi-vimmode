@@ -1,3 +1,4 @@
+import { CustomEditor } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { afterEach, expect, test } from "bun:test";
 
@@ -2595,4 +2596,25 @@ test("missing shutdown callback does not throw", () => {
   editor.setText("hello");
   runEx(editor, "q");
   expect(editor.getText()).toBe("hello");
+});
+
+test("keeps host composer rows that fold text into the closing border", () => {
+  const { editor } = createEditor();
+  editor.handleInput("h");
+  editor.handleInput("i");
+
+  const originalRender = CustomEditor.prototype.render;
+  CustomEditor.prototype.render = function (this: VimEditor, width: number): string[] {
+    void width;
+    return ["╭──╮", `╰─ ${this.getText()} ─╯`];
+  };
+  try {
+    const lines = editor.render(20);
+    const textRow = lines.findIndex((line) => line.includes("hi"));
+    const statusRow = lines.findIndex((line) => line.includes("INSERT"));
+    expect(textRow).toBeGreaterThanOrEqual(0);
+    expect(statusRow).toBeGreaterThan(textRow);
+  } finally {
+    CustomEditor.prototype.render = originalRender;
+  }
 });

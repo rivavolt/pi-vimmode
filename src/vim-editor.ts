@@ -234,6 +234,48 @@ export type ResetTerminalCursorStyleOptions = {
   restoreHardwareCursorVisibility?: boolean;
 };
 
+
+function editorRowCarriesText(line: string | undefined): boolean {
+  if (!line) return false;
+  const bare = stripEscapeSequences(line).replace(/[\s╭╰╮╯╔╗╚╝═║│]+/g, "");
+  return bare.length > 0;
+}
+
+function stripEscapeSequences(line: string): string {
+  const esc = String.fromCharCode(27);
+  let out = "";
+  for (let i = 0; i < line.length; ) {
+    if (line[i] !== esc) {
+      out += line[i];
+      i += 1;
+      continue;
+    }
+    const kind = line[i + 1];
+    i = kind === "]" || kind === "_" ? endOfStringSequence(line, i + 2) : endOfControlSequence(line, i + 2);
+  }
+  return out;
+}
+
+// OSC/APC bodies run until a BEL or an ESC-\ string terminator.
+function endOfStringSequence(line: string, start: number): number {
+  const esc = String.fromCharCode(27);
+  const bel = String.fromCharCode(7);
+  let i = start;
+  while (i < line.length && line[i] !== bel && !(line[i] === esc && line[i + 1] === "\\")) {
+    i += 1;
+  }
+  return line[i] === bel ? i + 1 : Math.min(i + 2, line.length);
+}
+
+// CSI and two-byte escapes end at the first alphabetic byte.
+function endOfControlSequence(line: string, start: number): number {
+  let i = start;
+  while (i < line.length && !/[A-Za-z]/.test(line.charAt(i))) {
+    i += 1;
+  }
+  return Math.min(i + 1, line.length);
+}
+
 export class VimEditor extends CustomEditor {
   private modalState: ModalState;
   private configuration: VimRuntimeConfiguration;
@@ -371,7 +413,6 @@ export class VimEditor extends CustomEditor {
     this.modalState = update.state;
     this.applyEffects(update.effects);
   }
-
   override render(width: number): string[] {
     const reservedRows = Math.max(0, uiForOptions(this.options).workbench.reservedRows);
     const workbenchRows = renderWorkbenchRows(
@@ -399,8 +440,13 @@ export class VimEditor extends CustomEditor {
       ui: uiForOptions(this.options),
     });
     const statusLine = fitStatusBorder(status.left, status.right, width, this.borderColor);
-    if (this.isShowingAutocomplete()) lines.push(statusLine);
-    else lines[last] = statusLine;
+    // Some hosts fold the prompt text into the closing border row; replacing
+    // that row would hide the text, so only swap an empty trailing row.
+    if (this.isShowingAutocomplete() || editorRowCarriesText(lines[last])) {
+      lines.push(statusLine);
+    } else {
+      lines[last] = statusLine;
+    }
     lines.push(...workbenchRows);
     return lines;
   }
@@ -531,14 +577,14 @@ export class VimEditor extends CustomEditor {
     return restyleCursorMarker(super.render(width), this.getCurrentCursorStyle());
   }
 
-  private applyEffects(effects: ModalEffect[]): void {
-    for (const effect of effects) this.applyEffect(effect);
-  }
-
   private delegateDefaultInput(input: string): void {
     const before = this.redoSnapshot();
     super.handleInput(input);
     this.clearRedoAfterTextChange(before);
+  }
+
+  private applyEffects(effects: ModalEffect[]): void {
+    for (const effect of effects) this.applyEffect(effect);
   }
 
   private applyEffect(effect: ModalEffect): void {
