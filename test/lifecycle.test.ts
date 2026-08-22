@@ -32,7 +32,7 @@ type FakeUi = {
   setCalls: Array<FakeEditorComponent | undefined>;
   statuses: Array<[string, string]>;
   notifications: Array<[string, string]>;
-  getEditorComponent: () => FakeEditorComponent | undefined;
+  getEditorComponent?: () => FakeEditorComponent | undefined;
   setEditorComponent: (component: FakeEditorComponent | undefined) => void;
   setStatus: (key: string, value: string) => void;
   notify: (message: string, level: string) => void;
@@ -912,4 +912,25 @@ test("vimmode command toggles editor off and on", async () => {
   expect(ctx.ui.component).toBe(factory);
   expect(ctx.ui.statuses.at(-1)).toEqual(["pi-vimmode", "vim"]);
   expect(ctx.ui.notifications.at(-1)).toEqual(["pi-vimmode enabled", "info"]);
+});
+
+test("hosts without the editor getter still install and toggle off", async () => {
+  const { hooks, commands } = createLifecycleHarness();
+  const ctx = createContext("/repo");
+  delete (ctx.ui as { getEditorComponent?: unknown }).getEditorComponent;
+
+  hooks.get("session_start")?.({}, ctx);
+
+  expect(ctx.ui.setCalls).toHaveLength(1);
+  expect(ctx.ui.notifications).toEqual([]);
+
+  await commands.get("vimmode")?.handler("off", ctx);
+
+  expect(ctx.ui.component).toBeUndefined();
+  expect(ctx.ui.statuses.at(-1)).toEqual(["pi-vimmode", "vim off"]);
+
+  await commands.get("vimmode")?.handler("on", ctx);
+
+  expect(ctx.ui.component).toBe(ctx.ui.setCalls.at(-1));
+  expect(ctx.ui.statuses.at(-1)).toEqual(["pi-vimmode", "vim"]);
 });

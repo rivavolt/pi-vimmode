@@ -1,5 +1,4 @@
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-
 import type { ResolvedVimEditorOptions } from "./types.ts";
 
 import {
@@ -21,11 +20,18 @@ type VimEditorFactory = (
 /** Callback type for shutdown requests from VimEditor. */
 export type VimShutdownCallback = () => void;
 
-type EditorComponentFactory = ReturnType<ExtensionContext["ui"]["getEditorComponent"]>;
+type EditorComponentFactory = NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>;
 type TrackedEditor = Pick<
   VimEditor,
   "reconfigure" | "resetTerminalCursorStyle" | "setAgentBusy" | "updateDiagnostics"
 >;
+
+// Hosts older than the editor-factory getter (see can1357/oh-my-pi#8655) only
+// expose setEditorComponent; treat the active factory as unknown there.
+function activeEditorFactory(ctx: ExtensionContext): EditorComponentFactory | undefined {
+  const get = (ctx.ui as Partial<ExtensionContext["ui"]>).getEditorComponent;
+  return typeof get === "function" ? get.call(ctx.ui) : undefined;
+}
 type CreateEditor = (
   tui: ConstructorParameters<typeof VimEditor>[0],
   theme: ConstructorParameters<typeof VimEditor>[1],
@@ -147,7 +153,7 @@ type EditorState = {
 
 function finishInstall(state: EditorState, ctx: ExtensionContext, force = false): void {
   state.currentShutdown = () => ctx.shutdown();
-  const current = ctx.ui.getEditorComponent();
+  const current = activeEditorFactory(ctx);
   if (current === state.editorFactory) {
     state.hasInstalledFactory = true;
     return;
@@ -255,7 +261,8 @@ function disableEditor(state: EditorState, ctx: ExtensionContext): void {
   state.enabled = false;
   state.agentBusy = false;
   resetKnownEditors(state);
-  if (ctx.ui.getEditorComponent() === state.editorFactory) {
+  const current = activeEditorFactory(ctx);
+  if (current === state.editorFactory || (current === undefined && state.hasInstalledFactory)) {
     ctx.ui.setEditorComponent(state.previousEditorFactory);
     state.hasInstalledFactory = false;
   }
